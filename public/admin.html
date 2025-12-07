@@ -1,0 +1,39 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Panel WebSocket</title>
+    <style>
+        body { background:#111; color:white; font-family:Arial; padding:20px; }
+        .card {
+            background:#222; padding:20px; margin-bottom:20px;
+            border-radius:10px; color:#0ff;
+        }
+    </style>
+</head>
+<body>
+
+<h1>📡 Panel de Administración WebSocket</h1>
+
+<div class="card">
+    <h3>Clientes conectados: <span id="count">0</span></h3>
+</div>
+
+<div class="card">
+    <h3>Últimos mensajes</h3>
+    <pre id="msg"></pre>
+</div>
+
+<script>
+async function update() {
+    const res = await fetch("/stats");
+    const data = await res.json();
+
+    document.getElementById("count").textContent = data.clients;
+    document.getElementById("msg").textContent = JSON.stringify(data.lastMessages, null, 2);
+}
+
+setInterval(update, 1000);
+</script>
+
+</body>
+</html>
