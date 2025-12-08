@@ -1,97 +1,74 @@
-const http = require("http");
-const fs = require("fs");
-const crypto = require("crypto");
+const WebSocket = require("ws");
+const express = require("express");
+const path = require("path");
 
+const app = express();
 const PORT = process.env.PORT || 8080;
 
-let clients = [];
-let handshaked = new WeakSet();
+// ✅ Servir carpeta public (admin.html)
+app.use(express.static("public"));
+
+const server = app.listen(PORT, () => {
+  console.log("✅ WebSocket + Panel en puerto:", PORT);
+});
+
+const wss = new WebSocket.Server({ server });
+
+let clients = 0;
 let lastMessages = [];
 
-const server = http.createServer((req, res) => {
-  if (req.url === "/") {
-    fs.readFile("./public/admin.html", (err, data) => {
-      if (err) {
-        res.writeHead(500);
-        res.end("No se encontró admin.html");
-        return;
-      }
-      res.writeHead(200, { "Content-Type": "text/html" });
-      res.end(data);
-    });
-  } 
-  else if (req.url === "/stats") {
-    res.writeHead(200, { "Content-Type": "application/json" });
-    res.end(JSON.stringify({
-      clients: clients.length,
+wss.on("connection", (ws) => {
+  clients++;
+  console.log("✅ Cliente conectado. Total:", clients);
+
+  // 🔹 Enviar estado inicial al admin
+  ws.send(JSON.stringify({
+    type: "stats",
+    clients,
+    lastMessages
+  }));
+
+  ws.on("message", (msg) => {
+    console.log("Mensaje:", msg.toString());
+
+    let data;
+    try {
+      data = JSON.parse(msg);
+    } catch {
+      return;
+    }
+
+    lastMessages.unshift(data);
+    if (lastMessages.length > 10) lastMessages.pop();
+
+    // ✅ ENVIAR ACTUALIZACIÓN A TODOS (INCLUYE ADMIN)
+    const payload = JSON.stringify({
+      type: "stats",
+      clients,
       lastMessages
-    }));
-  } 
-  else {
-    res.writeHead(404);
-    res.end();
-  }
-});
+    });
 
-server.on("upgrade", (req, socket) => {
-  const key = req.headers["sec-websocket-key"];
-  const acceptKey = crypto
-    .createHash("sha1")
-    .update(key + "258EAFA5-E914-47DA-95CA-C5AB0DC85B11")
-    .digest("base64");
-
-  const headers = [
-    "HTTP/1.1 101 Switching Protocols",
-    "Upgrade: websocket",
-    "Connection: Upgrade",
-    `Sec-WebSocket-Accept: ${acceptKey}`
-  ];
-
-  socket.write(headers.join("\r\n") + "\r\n\r\n");
-  clients.push(socket);
-  handshaked.add(socket);
-
-  socket.on("data", (buffer) => {
-    const message = unmask(buffer);
-    if (message) {
-      lastMessages.push(message);
-      if (lastMessages.length > 10) lastMessages.shift();
-      console.log("Mensaje:", message);
-    }
-
-    // retransmitir
-    for (const client of clients) {
-      if (client !== socket) client.write(mask(message));
-    }
+    wss.clients.forEach(client => {
+      if (client.readyState === WebSocket.OPEN) {
+        client.send(payload);
+      }
+    });
   });
 
-  socket.on("close", () => {
-    clients = clients.filter(c => c !== socket);
+  ws.on("close", () => {
+    clients--;
+    console.log("❌ Cliente desconectado. Total:", clients);
+
+    const payload = JSON.stringify({
+      type: "stats",
+      clients,
+      lastMessages
+    });
+
+    wss.clients.forEach(client => {
+      if (client.readyState === WebSocket.OPEN) {
+        client.send(payload);
+      }
+    });
   });
 });
-
-server.listen(PORT, () => {
-  console.log(`✅ WebSocket + Panel en puerto: ${PORT}`);
-});
-
-// ===== FUNCIONES =====
-
-function unmask(buffer) {
-  const length = buffer[1] & 127;
-  const mask = buffer.slice(2, 6);
-  const data = buffer.slice(6);
-  const result = Buffer.alloc(length);
-
-  for (let i = 0; i < length; i++) {
-    result[i] = data[i] ^ mask[i % 4];
-  }
-
-  return result.toString();
-}
-
-function mask(text) {
-  const payload = Buffer.from(text);
-  const length = payload.length;
-  const header = Buffer.from([0x81, length]);
-  return Buffer.concat([header, payload]);
-}

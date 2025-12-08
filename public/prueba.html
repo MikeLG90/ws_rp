@@ -1,0 +1,85 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <title>Prueba WebSocket</title>
+</head>
+<body>
+
+<h1>🚀 Cliente de Prueba WebSocket</h1>
+
+<p id="estado">⏳ Conectando...</p>
+
+<button onclick="enviarGPS()">📍 Enviar GPS</button>
+<button onclick="enviarEstado()">✅ Enviar Estado</button>
+<button onclick="enviarTexto()">💬 Enviar Texto</button>
+
+<pre id="log"></pre>
+
+<script>
+let ws;
+let conectado = false;
+
+function conectar() {
+  ws = new WebSocket("wss://rutasws-f6hhc6bmekbbekfe.mexicocentral-01.azurewebsites.net/");
+
+  ws.onopen = () => {
+    conectado = true;
+    document.getElementById("estado").textContent = "✅ Conectado";
+    log("✅ Conectado al servidor");
+  };
+
+  ws.onerror = (e) => {
+    document.getElementById("estado").textContent = "❌ Error de conexión";
+    log("❌ Error de conexión");
+  };
+
+  ws.onclose = () => {
+    conectado = false;
+    document.getElementById("estado").textContent = "🔄 Reconectando...";
+    log("🔄 Conexión cerrada, reconectando...");
+    setTimeout(conectar, 2000);
+  };
+
+  ws.onmessage = (e) => {
+    log("📥 Servidor: " + e.data);
+  };
+}
+
+function enviarGPS() {
+  if (!conectado) return alert("❌ Aún no conectado");
+  ws.send(JSON.stringify({
+    tipo: "gps",
+    lat: 19.4326,
+    lng: -99.1332
+  }));
+  log("📍 GPS enviado");
+}
+
+function enviarEstado() {
+  if (!conectado) return alert("❌ Aún no conectado");
+  ws.send(JSON.stringify({
+    tipo: "estado",
+    valor: "activo"
+  }));
+  log("✅ Estado enviado");
+}
+
+function enviarTexto() {
+  if (!conectado) return alert("❌ Aún no conectado");
+  ws.send(JSON.stringify({
+    tipo: "texto",
+    mensaje: "Hola desde la página de prueba"
+  }));
+  log("💬 Texto enviado");
+}
+
+function log(msg) {
+  document.getElementById("log").textContent += msg + "\n";
+}
+
+conectar();
+</script>
+
+</body>
+</html>

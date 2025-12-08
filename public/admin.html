@@ -24,16 +24,19 @@
 </div>
 
 <script>
-const ws = new WebSocket("wss://rutasws-f6hhc6bmekbbekfe.mexicocentral-01.azurewebsites.net");
+const ws = new WebSocket("wss://rutasws-f6hhc6bmekbbekfe.mexicocentral-01.azurewebsites.net/");
 
 ws.onmessage = (e) => {
   const data = JSON.parse(e.data);
 
-  document.getElementById("count").textContent = data.clients;
-  document.getElementById("msg").textContent =
-    JSON.stringify(data.lastMessages, null, 2);
+  if (data.type === "stats") {
+    document.getElementById("count").textContent = data.clients;
+    document.getElementById("msg").textContent =
+      JSON.stringify(data.lastMessages, null, 2);
+  }
 };
 </script>
+
 
 </body>
 </html>
