@@ -1,164 +1,123 @@
 const net = require("net");
 const crypto = require("crypto");
-const express = require("express");
-const http = require("http");
 
-// -------------------------
-//   PANEL ADMIN (Express)
-// -------------------------
-const app = express();
-app.use(express.static("public"));
+const PORT = process.env.PORT || 8080; // 🔥 IMPORTANTE PARA AZURE
 
-let serverHTTP = http.createServer(app);
-
-// Endpoint para estadísticas
-let stats = {
-    clients: 0,
-    lastMessages: []
-};
-
-app.get("/stats", (req, res) => {
-    res.json(stats);
-});
-
-app.get("/admin", (req, res) => {
-    res.sendFile(__dirname + "/public/admin.html");
-});
-
-// -------------------------
-//   WEBSOCKET NATIVO
-// -------------------------
 let clients = [];
 let handshaked = new WeakSet();
 
-const wsServer = net.createServer((socket) => {
-    socket.setNoDelay(true);
-    socket.setEncoding("binary");
+console.log("Servidor WebSocket iniciando...");
 
-    clients.push(socket);
-    stats.clients = clients.length;
+const server = net.createServer((socket) => {
+  socket.setNoDelay(true);
+  clients.push(socket);
+  console.log("Cliente conectado");
 
-    console.log("Cliente conectado");
+  socket.on("data", (buffer) => {
 
-    socket.on("data", (buffer) => {
-        // Handshake
-        if (!handshaked.has(socket)) {
-            const request = buffer.toString();
-            const keyMatch = request.match(/Sec-WebSocket-Key: (.*)\r\n/);
+    // ---------- HANDSHAKE ----------
+    if (!handshaked.has(socket)) {
+      const req = buffer.toString();
+      const keyMatch = req.match(/Sec-WebSocket-Key: (.*)\r\n/);
 
-            if (keyMatch) {
-                const key = keyMatch[1].trim();
-                const acceptKey = crypto
-                    .createHash("sha1")
-                    .update(key + "258EAFA5-E914-47DA-95CA-C5AB0DC85B11")
-                    .digest("base64");
+      if (keyMatch) {
+        const key = keyMatch[1].trim();
+        const accept = crypto
+          .createHash("sha1")
+          .update(key + "258EAFA5-E914-47DA-95CA-C5AB0DC85B11")
+          .digest("base64");
 
-                socket.write(
-                    "HTTP/1.1 101 Switching Protocols\r\n" +
-                    "Upgrade: websocket\r\n" +
-                    "Connection: Upgrade\r\n" +
-                    `Sec-WebSocket-Accept: ${acceptKey}\r\n\r\n`
-                );
+        const res =
+          "HTTP/1.1 101 Switching Protocols\r\n" +
+          "Upgrade: websocket\r\n" +
+          "Connection: Upgrade\r\n" +
+          `Sec-WebSocket-Accept: ${accept}\r\n\r\n`;
 
-                handshaked.add(socket);
-                console.log("Handshake completado");
-            }
-            return;
-        }
-
-        // Frame WebSocket decodificado
-        const message = unmask(Buffer.from(buffer, "binary"));
-
-        // Registrar solo los últimos 10 mensajes
-        stats.lastMessages.unshift(message.slice(0, 120));
-        stats.lastMessages = stats.lastMessages.slice(0, 10);
-
-        // Identificar si es JSON (GPS) o binario/video
-        let parsed;
-        try {
-            parsed = JSON.parse(message);
-            console.log("GPS:", parsed);
-        } catch {
-            console.log("Frame VIDEO/BINARIO recibido (" + message.length + " bytes)");
-        }
-
-        // Reenviar a otros clientes
-        for (const client of clients) {
-            if (client !== socket && handshaked.has(client)) {
-                client.write(mask(message));
-            }
-        }
-    });
-
-    socket.on("end", () => {
-        clients = clients.filter(c => c !== socket);
-        stats.clients = clients.length;
-        console.log("Cliente desconectado");
-    });
-
-    socket.on("error", () => {
-        clients = clients.filter(c => c !== socket);
-        stats.clients = clients.length;
-        console.log("Error: cliente desconectado");
-    });
-});
-
-// ------------------------
-//  INICIAR SERVIDORES
-// ------------------------
-const PORT_WS = 8080;
-const PORT_HTTP = 3000;
-
-wsServer.listen(PORT_WS, "0.0.0.0", () => {
-    console.log("WebSocket en puerto:", PORT_WS);
-});
-
-serverHTTP.listen(PORT_HTTP, () => {
-    console.log("Panel admin → http://localhost:" + PORT_HTTP + "/admin");
-});
-
-// ------------------------
-// Funciones WS
-// ------------------------
-function unmask(buffer) {
-    const secondByte = buffer[1];
-    let length = secondByte & 127;
-    let maskStart = 2;
-    let dataStart = 6;
-
-    if (length === 126) {
-        maskStart = 4;
-        dataStart = 8;
-    } else if (length === 127) {
-        maskStart = 10;
-        dataStart = 14;
+        socket.write(res);
+        handshaked.add(socket);
+        console.log("Handshake OK");
+      }
+      return;
     }
 
-    const masks = buffer.slice(maskStart, maskStart + 4);
-    const data = buffer.slice(dataStart);
-    const result = Buffer.alloc(data.length);
+    // ---------- FRAME WS ----------
+    const frame = decodeFrame(buffer);
 
-    for (let i = 0; i < data.length; i++) {
-        result[i] = data[i] ^ masks[i % 4];
+    if (frame.opcode === 0x1) {
+      console.log("GPS:", frame.payload.toString());
     }
 
-    return result.toString();
+    if (frame.opcode === 0x2) {
+      console.log("VIDEO:", frame.payload.length, "bytes");
+    }
+
+    // ---------- BROADCAST ----------
+    for (const client of clients) {
+      if (client !== socket && handshaked.has(client)) {
+        client.write(encodeFrame(frame.opcode, frame.payload));
+      }
+    }
+  });
+
+  socket.on("end", () => {
+    clients = clients.filter(c => c !== socket);
+    console.log("Cliente desconectado");
+  });
+
+  socket.on("error", () => {
+    clients = clients.filter(c => c !== socket);
+    console.log("Cliente desconectado por error");
+  });
+});
+
+server.listen(PORT, "0.0.0.0", () => {
+  console.log("✅ WebSocket activo en puerto:", PORT);
+});
+
+// ----------------------
+// FUNCIONES WS BINARIO
+// ----------------------
+
+function decodeFrame(buffer) {
+  const opcode = buffer[0] & 0x0f;
+  const masked = buffer[1] & 0x80;
+  let length = buffer[1] & 0x7f;
+  let idx = 2;
+
+  if (length === 126) {
+    length = buffer.readUInt16BE(2);
+    idx = 4;
+  } else if (length === 127) {
+    length = Number(buffer.readBigUInt64BE(2));
+    idx = 10;
+  }
+
+  const mask = masked ? buffer.slice(idx, idx + 4) : null;
+  idx += masked ? 4 : 0;
+
+  const payload = buffer.slice(idx, idx + length);
+
+  if (masked) {
+    for (let i = 0; i < payload.length; i++)
+      payload[i] ^= mask[i % 4];
+  }
+
+  return { opcode, payload };
 }
 
-function mask(text) {
-    const payload = Buffer.from(text);
-    const length = payload.length;
-    let header;
+function encodeFrame(opcode, payload) {
+  const length = payload.length;
+  let header;
 
-    if (length <= 125) {
-        header = Buffer.from([0x81, length]);
-    } else if (length <= 65535) {
-        header = Buffer.from([0x81, 126, (length >> 8) & 255, length & 255]);
-    } else {
-        const lenBuffer = Buffer.alloc(8);
-        lenBuffer.writeBigUInt64BE(BigInt(length));
-        header = Buffer.concat([Buffer.from([0x81, 127]), lenBuffer]);
-    }
+  if (length <= 125) {
+    header = Buffer.from([0x80 | opcode, length]);
+  } else if (length <= 65535) {
+    header = Buffer.from([0x80 | opcode, 126, (length >> 8) & 255, length & 255]);
+  } else {
+    const len = Buffer.alloc(8);
+    len.writeBigInt64BE(BigInt(length));
+    header = Buffer.concat([Buffer.from([0x80 | opcode, 127]), len]);
+  }
 
-    return Buffer.concat([header, payload]);
+  return Buffer.concat([header, payload]);
 }
