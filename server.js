@@ -1,11 +1,11 @@
-const { WebSocketServer } = require('ws'); 
 const express = require("express");
+const http = require("http");
+const { WebSocketServer } = require("ws");
 
 const app = express();
-const HTTP_PORT = 3000;
-
 app.use(express.json());
 
+// ===== API REST =====
 app.post("/broadcast/incidente", (req, res) => {
   const incidente = req.body;
   console.log("Incidente recibido:", incidente);
@@ -16,59 +16,55 @@ app.post("/broadcast/incidente", (req, res) => {
 app.post("/broadcast/asignacion-ambulancia", (req, res) => {
   const payload = req.body;
   console.log("Asignación enviada:", payload);
-  broadcast(payload); 
+  broadcast(payload);
   res.json({ success: true });
 });
 
-
-
 app.post("/broadcast/incidente-actualizado", (req, res) => {
-  const incidenteCompleto = req.body; 
+  const incidenteCompleto = req.body;
 
   console.log("Actualización recibida. ID:", incidenteCompleto.id);
   console.log("Datos nuevos (ejemplo):", incidenteCompleto.descripcion);
   console.log("--- ACTUALIZACIÓN COMPLETA RECIBIDA ---");
-  console.dir(incidenteCompleto, { depth: null, colors: true }); 
+  console.dir(incidenteCompleto, { depth: null, colors: true });
 
-  broadcast({ 
-      event: "incidente.actualizado", 
-      data: incidenteCompleto 
+  broadcast({
+    event: "incidente.actualizado",
+    data: incidenteCompleto
   });
 
   res.json({ success: true, message: "Datos actualizados enviados" });
 });
 
-function broadcast(jsonData) {
-  clients.forEach(client => {
-    if (client.readyState === 1) {
-      client.send(JSON.stringify(jsonData));
-    }
-  });
-}
+// ===== HTTP SERVER =====
+const server = http.createServer(app);
 
-
-function broadcast(jsonData) {
-  clients.forEach(client => {
-    if (client.readyState === 1) {
-      client.send(JSON.stringify(jsonData));
-    }
-  });
-}
-
-app.listen(HTTP_PORT, () => {
-    console.log(`API REST escuchando en http://localhost:${HTTP_PORT}`);
-});
-
-const wss = new WebSocketServer({ port: 8080 });
+// ===== WEBSOCKET =====
+const wss = new WebSocketServer({ server });
 let clients = [];
 
-wss.on('connection', (ws) => {
-  console.log('Cliente conectado');
+wss.on("connection", (ws) => {
+  console.log("Cliente conectado");
   clients.push(ws);
-  
-  ws.on('close', () => {
+
+  ws.on("close", () => {
     clients = clients.filter(c => c !== ws);
   });
 });
 
-console.log('Servidor WebSocket activo en ws://localhost:8080');
+// ===== BROADCAST =====
+function broadcast(jsonData) {
+  const msg = JSON.stringify(jsonData);
+  clients.forEach(client => {
+    if (client.readyState === client.OPEN) {
+      client.send(msg);
+    }
+  });
+}
+
+// ===== INICIO DEL WS =====
+const PORT = process.env.PORT || 8080;
+server.listen(PORT, () => {
+  console.log(`API REST escuchando en http://localhost:${PORT}`);
+  console.log(`Servidor WebSocket activo en ws://localhost:${PORT}`);
+});
